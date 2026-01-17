@@ -111,10 +111,17 @@ func (is *imageService) PullImage(ctx context.Context, req *runtime.PullImageReq
 
 	ref := req.Image.Image
 
-	// Handle flake: prefix
-	if strings.HasPrefix(ref, nix2container.FlakeRefPrefix) {
-		flakeRef := strings.TrimPrefix(ref, nix2container.FlakeRefPrefix)
-		log.G(ctx).WithField("flakeRef", flakeRef).Info("[image-service] Building flake image")
+	log.G(ctx).WithField("ref", ref).WithField("flakeGitHubPrefix", nix2container.FlakeGitHubRefPrefix).Info("[image-service] PullImage called")
+
+	// Handle flake-github:0/ prefix
+	// Converts "flake-github:0/user/repo" to "github:user/repo" for nix build
+	if strings.HasPrefix(ref, nix2container.FlakeGitHubRefPrefix) {
+		// Extract user/repo part and convert to github:user/repo format
+		repoPath := strings.TrimPrefix(ref, nix2container.FlakeGitHubRefPrefix)
+		// Remove :latest or other tags that k8s might append (not valid for flake refs)
+		repoPath = strings.TrimSuffix(repoPath, ":latest")
+		flakeRef := "github:" + repoPath
+		log.G(ctx).WithField("flakeRef", flakeRef).Info("[image-service] Building flake image from GitHub")
 
 		archivePath, err := is.flakeBuilder(ctx, flakeRef)
 		if err != nil {

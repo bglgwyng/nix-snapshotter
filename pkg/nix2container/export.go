@@ -20,11 +20,12 @@ var (
 	// Docker Registry.
 	ImageRefPrefix = "nix:0"
 
-	// FlakeRefPrefix is used for flake-based image references in the format
-	// "flake:<flake-url>". This allows building images from flake URLs directly,
+	// FlakeGitHubRefPrefix is used for GitHub flake-based image references in the format
+	// "flake-github:0/user/repo". This allows building images from GitHub flake URLs directly,
 	// without requiring the nix store path to exist on the node beforehand.
-	// Example: "flake:github:user/repo#package"
-	FlakeRefPrefix = "flake:"
+	// The format is OCI-compatible (host:port/path) and gets converted to "github:user/repo".
+	// Example: "flake-github:0/bglgwyng/redis-image"
+	FlakeGitHubRefPrefix = "flake-github:0/"
 )
 
 // Export writes an OCI archive to the writer using the provided nix image
