@@ -35,12 +35,14 @@ type imageService struct {
 	client             *client.Client
 	imageServiceClient runtime.ImageServiceClient
 	nixBuilder         NixBuilder
+	flakeBuilder       FlakeBuilder
 }
 
 func NewImageService(ctx context.Context, containerdAddr string, opts ...ImageServiceOpt) (runtime.ImageServiceServer, error) {
 	cfg := ImageServiceConfig{
 		Config: Config{
-			nixBuilder: defaultNixBuilder,
+			nixBuilder:   defaultNixBuilder,
+			flakeBuilder: defaultFlakeBuilder,
 		},
 	}
 	for _, opt := range opts {
@@ -48,7 +50,8 @@ func NewImageService(ctx context.Context, containerdAddr string, opts ...ImageSe
 	}
 
 	service := &imageService{
-		nixBuilder: cfg.nixBuilder,
+		nixBuilder:   cfg.nixBuilder,
+		flakeBuilder: cfg.flakeBuilder,
 	}
 
 	go func() {
@@ -107,28 +110,50 @@ func (is *imageService) PullImage(ctx context.Context, req *runtime.PullImageReq
 	}
 
 	ref := req.Image.Image
-	if !strings.HasPrefix(ref, nix2container.ImageRefPrefix) {
-		log.G(ctx).WithField("ref", ref).Info("[image-service] Falling back to CRI pull image")
-		resp, err := client.PullImage(ctx, req)
-		return resp, err
-	}
-	archivePath := strings.TrimSuffix(
-		strings.TrimPrefix(ref, nix2container.ImageRefPrefix),
-		":latest",
-	)
 
-	_, err := os.Stat(archivePath)
-	if errors.Is(err, os.ErrNotExist) {
-		log.G(ctx).Info("[image-service] Pulling nix image archive")
-		err := is.nixBuilder(ctx, "", archivePath)
+	// Handle flake: prefix
+	if strings.HasPrefix(ref, nix2container.FlakeRefPrefix) {
+		flakeRef := strings.TrimPrefix(ref, nix2container.FlakeRefPrefix)
+		log.G(ctx).WithField("flakeRef", flakeRef).Info("[image-service] Building flake image")
+
+		archivePath, err := is.flakeBuilder(ctx, flakeRef)
 		if err != nil {
 			return nil, err
 		}
-	} else if err != nil {
-		return nil, err
+
+		return is.loadArchive(ctx, archivePath)
 	}
 
-	log.G(ctx).Info("[image-service] Loading nix image archive")
+	// Handle nix:0 prefix
+	if strings.HasPrefix(ref, nix2container.ImageRefPrefix) {
+		archivePath := strings.TrimSuffix(
+			strings.TrimPrefix(ref, nix2container.ImageRefPrefix),
+			":latest",
+		)
+
+		_, err := os.Stat(archivePath)
+		if errors.Is(err, os.ErrNotExist) {
+			log.G(ctx).Info("[image-service] Pulling nix image archive")
+			err := is.nixBuilder(ctx, "", archivePath)
+			if err != nil {
+				return nil, err
+			}
+		} else if err != nil {
+			return nil, err
+		}
+
+		return is.loadArchive(ctx, archivePath)
+	}
+
+	// Fallback to CRI pull image
+	log.G(ctx).WithField("ref", ref).Info("[image-service] Falling back to CRI pull image")
+	resp, err := client.PullImage(ctx, req)
+	return resp, err
+}
+
+// loadArchive loads an OCI archive into containerd and returns the image reference.
+func (is *imageService) loadArchive(ctx context.Context, archivePath string) (*runtime.PullImageResponse, error) {
+	log.G(ctx).WithField("archivePath", archivePath).Info("[image-service] Loading nix image archive")
 	ctx = namespaces.WithNamespace(ctx, "k8s.io")
 	img, err := nix2container.Load(ctx, is.client, archivePath)
 	if err != nil {

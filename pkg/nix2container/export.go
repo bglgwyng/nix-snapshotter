@@ -19,6 +19,12 @@ var (
 	// it will be able to resolve the image manifest with nix rather than a
 	// Docker Registry.
 	ImageRefPrefix = "nix:0"
+
+	// FlakeRefPrefix is used for flake-based image references in the format
+	// "flake:<flake-url>". This allows building images from flake URLs directly,
+	// without requiring the nix store path to exist on the node beforehand.
+	// Example: "flake:github:user/repo#package"
+	FlakeRefPrefix = "flake:"
 )
 
 // Export writes an OCI archive to the writer using the provided nix image
