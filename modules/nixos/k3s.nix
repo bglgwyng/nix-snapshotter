@@ -17,7 +17,7 @@ in {
       # This was introduced to provide a mergeable listOf type.
       moreFlags = mkOption {
         type = types.listOf types.str;
-        description = lib.mdDoc "Extra flags to pass to the k3s command.";
+        description = "Extra flags to pass to the k3s command.";
         default = [];
         example = [ "--no-deploy traefik" "--cluster-cidr 10.24.0.0/16" ];
       };

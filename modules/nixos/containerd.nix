@@ -74,11 +74,6 @@ in {
         settings = cfg.lib.mkNixSnapshotterSettings;
       };
     })
-    (lib.mkIf (cfg.k3sIntegration && cfg.nixSnapshotterIntegration) {
-      services.k3s.moreFlags = [
-        "--image-service-endpoint unix:///run/nix-snapshotter/nix-snapshotter.sock"
-      ];
-    })
     (lib.mkIf cfg.gVisorIntegration {
       virtualisation.containerd = {
         path = [ pkgs.gvisor ];
