@@ -143,6 +143,110 @@ For pure Nix images, this means we can have fully declarative Kubernetes
 resources, down to the image specification. The Kubernetes resource can be
 defined fully as a Nix expression and deployed without a Docker Registry.
 
+## Flake Protocols
+
+In addition to the `nix:0` prefix for local Nix store paths, nix-snapshotter
+supports several flake protocols that allow pulling images directly from Nix
+flake URLs. These protocols convert OCI-compatible image references to their
+corresponding Nix flake URLs and build the image on-the-fly.
+
+The `nix:0` prefix requires the image archive to already exist in the local
+Nix store, which works well for single-node setups where the same machine
+builds and runs containers. However, in multi-node Kubernetes clusters or
+distributed environments, there's no guarantee that the build result exists
+on every node. Flake protocols solve this by allowing each node to fetch and
+build the image from the flake URL on demand, without requiring pre-built
+artifacts to be distributed across nodes.
+
+### Supported Protocols
+
+| Image Reference Prefix | Nix Flake URL Format |
+|------------------------|----------------------|
+| `flake-github:0/` | `github:` |
+| `flake-tarball-https:0/` | `tarball+https://` |
+| `flake-tarball-http:0/` | `tarball+http://` |
+| `flake-git-https:0/` | `git+https://` |
+| `flake-git-http:0/` | `git+http://` |
+| `flake-git-ssh:0/` | `git+ssh://` |
+
+### Special Character Encoding
+
+OCI image references have strict character requirements (`[a-z0-9._-]` for
+repository names). To support flake URLs with special characters, we use the
+following encoding scheme:
+
+| Character | Encoded As |
+|-----------|------------|
+| `@` | `--at--` |
+| `?` | `--q--` |
+| `=` | `--eq--` |
+| `&` | `--amp--` |
+
+### Examples
+
+**GitHub Flake:**
+```
+# Flake URL: github:user/repo
+image: flake-github:0/user/repo
+
+# With ref parameter: github:user/repo?ref=main
+image: flake-github:0/user/repo--q--ref--eq--main
+```
+
+**Git SSH Flake:**
+```
+# Flake URL: git+ssh://git@github.com/user/repo
+image: flake-git-ssh:0/git--at--github.com/user/repo
+
+# With ref and rev: git+ssh://git@github.com/user/repo?ref=main&rev=abc123
+image: flake-git-ssh:0/git--at--github.com/user/repo--q--ref--eq--main--amp--rev--eq--abc123
+```
+
+**Tarball HTTPS Flake:**
+```
+# Flake URL: tarball+https://github.com/user/repo/archive/main.tar.gz
+image: flake-tarball-https:0/github.com/user/repo/archive/main.tar.gz
+```
+
+### encode-flake-ref Utility
+
+A CLI utility `encode-flake-ref` is provided to convert nix flake URLs to
+OCI-compatible image references:
+
+```sh
+$ encode-flake-ref 'github:user/repo'
+flake-github:0/user/repo
+
+$ encode-flake-ref 'git+ssh://git@github.com/user/repo?ref=main&rev=abc123'
+flake-git-ssh:0/git--at--github.com/user/repo--q--ref--eq--main--amp--rev--eq--abc123
+```
+
+The utility is available through the flake:
+
+```sh
+nix run github:bglgwyng/nix-snapshotter#encode-flake-ref -- 'github:user/repo'
+```
+
+Or install it in your environment by adding `pkgs.encode-flake-ref` after
+applying the overlay.
+
+### Kubernetes Pod Example
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: redis-flake
+spec:
+  containers:
+    - name: redis
+      image: flake-git-ssh:0/git--at--github.com/user/redis-image--q--ref--eq--main
+```
+
+> [!NOTE]
+> The flake must expose a `packages.<system>.default` output that builds a
+> nix-snapshotter image using `pkgs.nix-snapshotter.buildImage`.
+
 ## Implementation quirks
 
 If we decide move the mountpoints tarball generation to unpack time, note that
