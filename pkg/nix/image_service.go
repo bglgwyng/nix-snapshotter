@@ -83,6 +83,20 @@ func (is *imageService) getClient() runtime.ImageServiceClient {
 	return client
 }
 
+// decodeFlakeRef decodes OCI-encoded special characters back to their original form.
+// OCI image references don't allow certain characters, so we encode them:
+// - "--at--" → "@" (for user@host in SSH URLs)
+// - "--q--" → "?" (for query string start)
+// - "--eq--" → "=" (for query parameter assignments)
+// - "--amp--" → "&" (for multiple query parameters)
+func decodeFlakeRef(s string) string {
+	s = strings.ReplaceAll(s, "--at--", "@")
+	s = strings.ReplaceAll(s, "--q--", "?")
+	s = strings.ReplaceAll(s, "--eq--", "=")
+	s = strings.ReplaceAll(s, "--amp--", "&")
+	return s
+}
+
 // ListImages lists existing images.
 func (is *imageService) ListImages(ctx context.Context, req *runtime.ListImagesRequest) (*runtime.ListImagesResponse, error) {
 	client := is.getClient()
@@ -121,6 +135,7 @@ func (is *imageService) PullImage(ctx context.Context, req *runtime.PullImageReq
 		repoPath := strings.TrimPrefix(ref, nix2container.FlakeGitHubRefPrefix)
 		// Remove :latest or other tags that k8s might append (not valid for flake refs)
 		repoPath = strings.TrimSuffix(repoPath, ":latest")
+		repoPath = decodeFlakeRef(repoPath)
 		flakeRef := "github:" + repoPath
 		log.G(ctx).WithField("flakeRef", flakeRef).Info("[image-service] Building flake image from GitHub")
 
@@ -139,6 +154,7 @@ func (is *imageService) PullImage(ctx context.Context, req *runtime.PullImageReq
 		urlPath := strings.TrimPrefix(ref, nix2container.FlakeTarballHTTPSRefPrefix)
 		// Remove :latest or other tags that k8s might append (not valid for flake refs)
 		urlPath = strings.TrimSuffix(urlPath, ":latest")
+		urlPath = decodeFlakeRef(urlPath)
 		flakeRef := "tarball+https://" + urlPath
 		log.G(ctx).WithField("flakeRef", flakeRef).Info("[image-service] Building flake image from tarball HTTPS")
 
@@ -157,6 +173,7 @@ func (is *imageService) PullImage(ctx context.Context, req *runtime.PullImageReq
 		urlPath := strings.TrimPrefix(ref, nix2container.FlakeTarballHTTPRefPrefix)
 		// Remove :latest or other tags that k8s might append (not valid for flake refs)
 		urlPath = strings.TrimSuffix(urlPath, ":latest")
+		urlPath = decodeFlakeRef(urlPath)
 		flakeRef := "tarball+http://" + urlPath
 		log.G(ctx).WithField("flakeRef", flakeRef).Info("[image-service] Building flake image from tarball HTTP")
 
@@ -175,6 +192,7 @@ func (is *imageService) PullImage(ctx context.Context, req *runtime.PullImageReq
 		urlPath := strings.TrimPrefix(ref, nix2container.FlakeGitHTTPSRefPrefix)
 		// Remove :latest or other tags that k8s might append (not valid for flake refs)
 		urlPath = strings.TrimSuffix(urlPath, ":latest")
+		urlPath = decodeFlakeRef(urlPath)
 		flakeRef := "git+https://" + urlPath
 		log.G(ctx).WithField("flakeRef", flakeRef).Info("[image-service] Building flake image from git HTTPS")
 
@@ -193,6 +211,7 @@ func (is *imageService) PullImage(ctx context.Context, req *runtime.PullImageReq
 		urlPath := strings.TrimPrefix(ref, nix2container.FlakeGitHTTPRefPrefix)
 		// Remove :latest or other tags that k8s might append (not valid for flake refs)
 		urlPath = strings.TrimSuffix(urlPath, ":latest")
+		urlPath = decodeFlakeRef(urlPath)
 		flakeRef := "git+http://" + urlPath
 		log.G(ctx).WithField("flakeRef", flakeRef).Info("[image-service] Building flake image from git HTTP")
 
@@ -212,15 +231,14 @@ func (is *imageService) PullImage(ctx context.Context, req *runtime.PullImageReq
 		urlPath := strings.TrimPrefix(ref, nix2container.FlakeGitSSHRefPrefix)
 		// Remove :latest or other tags that k8s might append (not valid for flake refs)
 		urlPath = strings.TrimSuffix(urlPath, ":latest")
-		// Decode "--at--" back to "@" (first occurrence only)
-		// e.g., "git--at--github.com/user/repo" -> "git@github.com/user/repo"
+		// Validate that "--at--" is present (required for SSH user@host format)
 		if !strings.Contains(urlPath, "--at--") {
 			if strings.Contains(urlPath, "@") {
 				return nil, fmt.Errorf("invalid flake-git-ssh reference: '@' is not allowed, use '--at--' instead (e.g., git--at--github.com) in %q", ref)
 			}
 			return nil, fmt.Errorf("invalid flake-git-ssh reference: missing '--at--' (encodes '@' for user@host) in %q", ref)
 		}
-		urlPath = strings.Replace(urlPath, "--at--", "@", 1)
+		urlPath = decodeFlakeRef(urlPath)
 		flakeRef := "git+ssh://" + urlPath
 		log.G(ctx).WithField("flakeRef", flakeRef).Info("[image-service] Building flake image from git SSH")
 
