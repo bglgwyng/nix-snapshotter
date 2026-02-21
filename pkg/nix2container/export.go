@@ -48,6 +48,13 @@ var (
 	// Example: "flake-git-https:0/github.com/user/repo"
 	FlakeGitHTTPSRefPrefix = "flake-git-https:0/"
 
+	// FlakeGitHTTPRefPrefix is used for git HTTP flake-based image references in the format
+	// "flake-git-http:0/host/path". This allows building images from git HTTP URLs directly,
+	// without requiring the nix store path to exist on the node beforehand.
+	// The format is OCI-compatible (host:port/path) and gets converted to "git+http://host/path".
+	// Example: "flake-git-http:0/example.com/user/repo"
+	FlakeGitHTTPRefPrefix = "flake-git-http:0/"
+
 	// FlakeGitSSHRefPrefix is used for git SSH flake-based image references in the format
 	// "flake-git-ssh:0/host/path". This allows building images from git SSH URLs directly,
 	// without requiring the nix store path to exist on the node beforehand.
