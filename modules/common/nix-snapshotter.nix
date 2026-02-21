@@ -1,24 +1,29 @@
-{ config, pkgs, lib, ... }:
+{
+  config,
+  pkgs,
+  lib,
+  ...
+}:
 let
   inherit (lib)
     mkOption
     mkPackageOption
     types
-  ;
+    ;
 
   inherit (config.virtualisation.containerd.rootless)
     nsenter
-  ;
+    ;
 
-  settingsFormat = pkgs.formats.toml {};
+  settingsFormat = pkgs.formats.toml { };
 
   options = {
     configFile = mkOption {
       type = types.nullOr types.path;
       description = ''
-       Path to nix-snapshotter config file.
-       Setting this option will override any configuration applied by the
-       settings option.
+        Path to nix-snapshotter config file.
+        Setting this option will override any configuration applied by the
+        settings option.
       '';
     };
 
@@ -26,7 +31,10 @@ let
 
     path = mkOption {
       type = types.listOf types.package;
-      default = [ pkgs.nix ];
+      default = [
+        pkgs.nix
+        pkgs.git
+      ];
       description = ''
         Set the path of the nix-snapshotter service, if it requires access to
         alternative nix binaries.
@@ -35,7 +43,7 @@ let
 
     settings = mkOption {
       type = settingsFormat.type;
-      default = {};
+      default = { };
       description = ''
         Verbatim lines to add to config.toml
       '';
@@ -52,19 +60,21 @@ let
   # Converts a home-manager systemd user service to a NixOS systemd user
   # service. Since home-manager style services map closer to raw systemd
   # service specification, it's easier to transform in this direction.
-  convertServiceToNixOS = unit: lib.mkMerge [
-    (lib.mkIf (unit ? Service) {
-      serviceConfig = unit.Service;
-    })
-    (lib.mkIf (unit ? Unit) {
-      unitConfig = unit.Unit;
-    })
-    (lib.mkIf (unit ? Install.WantedBy) {
-      # Only `WantedBy` is supported by NixOS as [Install] fields are not
-      # supported, due to its stateful nature.
-      wantedBy = unit.Install.WantedBy;
-    })
-  ];
+  convertServiceToNixOS =
+    unit:
+    lib.mkMerge [
+      (lib.mkIf (unit ? Service) {
+        serviceConfig = unit.Service;
+      })
+      (lib.mkIf (unit ? Unit) {
+        unitConfig = unit.Unit;
+      })
+      (lib.mkIf (unit ? Install.WantedBy) {
+        # Only `WantedBy` is supported by NixOS as [Install] fields are not
+        # supported, due to its stateful nature.
+        wantedBy = unit.Install.WantedBy;
+      })
+    ];
 
   mkNixSnapshotterService = {
     Service = {
@@ -80,9 +90,9 @@ let
     };
   };
 
-  mkRootlessNixSnapshotterService = cfg: lib.recursiveUpdate
-    mkNixSnapshotterService
-    {
+  mkRootlessNixSnapshotterService =
+    cfg:
+    lib.recursiveUpdate mkNixSnapshotterService {
       Unit = {
         Description = "nix-snapshotter - containerd snapshotter that understands nix store paths natively (Rootless)";
         After = [ "containerd.service" ];
@@ -96,7 +106,8 @@ let
       Service.ExecStart = "${nsenter}/bin/containerd-nsenter ${cfg.package}/bin/nix-snapshotter --config ${cfg.configFile}";
     };
 
-in {
+in
+{
   options.services.nix-snapshotter = {
     lib = mkOption {
       type = types.attrs;
@@ -107,7 +118,7 @@ in {
           convertServiceToNixOS
           mkNixSnapshotterService
           mkRootlessNixSnapshotterService
-        ;
+          ;
       };
       internal = true;
     };

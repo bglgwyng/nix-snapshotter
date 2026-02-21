@@ -149,6 +149,24 @@ func (is *imageService) PullImage(ctx context.Context, req *runtime.PullImageReq
 		return is.loadArchive(ctx, archivePath)
 	}
 
+	// Handle flake-git-https:0/ prefix
+	// Converts "flake-git-https:0/host/path" to "git+https://host/path" for nix build
+	if strings.HasPrefix(ref, nix2container.FlakeGitHTTPSRefPrefix) {
+		// Extract host/path part and convert to git+https://host/path format
+		urlPath := strings.TrimPrefix(ref, nix2container.FlakeGitHTTPSRefPrefix)
+		// Remove :latest or other tags that k8s might append (not valid for flake refs)
+		urlPath = strings.TrimSuffix(urlPath, ":latest")
+		flakeRef := "git+https://" + urlPath
+		log.G(ctx).WithField("flakeRef", flakeRef).Info("[image-service] Building flake image from git HTTPS")
+
+		archivePath, err := is.flakeBuilder(ctx, flakeRef)
+		if err != nil {
+			return nil, err
+		}
+
+		return is.loadArchive(ctx, archivePath)
+	}
+
 	// Handle nix:0 prefix
 	if strings.HasPrefix(ref, nix2container.ImageRefPrefix) {
 		archivePath := strings.TrimSuffix(
