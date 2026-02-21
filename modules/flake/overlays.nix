@@ -28,9 +28,13 @@
       '';
     });
 
-    nix-snapshotter = self.callPackage ../../package.nix {
+    nix-snapshotter = (self.callPackage ../../package.nix {
       inherit (inputs) globset;
-    };
+    }).nix-snapshotter;
+
+    encode-flake-ref = (self.callPackage ../../package.nix {
+      inherit (inputs) globset;
+    }).encode-flake-ref;
   };
 
   perSystem =

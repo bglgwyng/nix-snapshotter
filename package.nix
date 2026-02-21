@@ -132,4 +132,96 @@ let
         load ${image}
     '';
 
-in nix-snapshotter
+  # Encodes a nix flake URL to an OCI-compatible image reference.
+  # Example: git+ssh://git@github.com/user/repo?ref=main
+  #       -> flake-git-ssh:0/git--at--github.com/user/repo--q--ref--eq--main
+  encodeFlakeRef = writeShellScriptBin "encode-flake-ref" ''
+    if [ $# -eq 0 ]; then
+      echo "Usage: encode-flake-ref <flake-url>" >&2
+      echo "" >&2
+      echo "Encodes a nix flake URL to an OCI-compatible image reference." >&2
+      echo "" >&2
+      echo "Examples:" >&2
+      echo "  encode-flake-ref 'github:user/repo'" >&2
+      echo "  encode-flake-ref 'git+ssh://git@github.com/user/repo?ref=main'" >&2
+      echo "  encode-flake-ref 'git+https://github.com/user/repo'" >&2
+      echo "  encode-flake-ref 'tarball+https://github.com/user/repo/archive/main.tar.gz'" >&2
+      exit 1
+    fi
+
+    url="$1"
+
+    # Encode special characters first (before protocol conversion)
+    encode_special() {
+      echo "$1" | sed \
+        -e 's/@/--at--/g' \
+        -e 's/?/--q--/g' \
+        -e 's/=/--eq--/g' \
+        -e 's/&/--amp--/g'
+    }
+
+    # github:user/repo -> flake-github:0/user/repo
+    if [[ "$url" == github:* ]]; then
+      path="''${url#github:}"
+      encoded=$(encode_special "$path")
+      echo "flake-github:0/$encoded"
+      exit 0
+    fi
+
+    # tarball+https://host/path -> flake-tarball-https:0/host/path
+    if [[ "$url" == tarball+https://* ]]; then
+      path="''${url#tarball+https://}"
+      encoded=$(encode_special "$path")
+      echo "flake-tarball-https:0/$encoded"
+      exit 0
+    fi
+
+    # tarball+http://host/path -> flake-tarball-http:0/host/path
+    if [[ "$url" == tarball+http://* ]]; then
+      path="''${url#tarball+http://}"
+      encoded=$(encode_special "$path")
+      echo "flake-tarball-http:0/$encoded"
+      exit 0
+    fi
+
+    # git+https://host/path -> flake-git-https:0/host/path
+    if [[ "$url" == git+https://* ]]; then
+      path="''${url#git+https://}"
+      encoded=$(encode_special "$path")
+      echo "flake-git-https:0/$encoded"
+      exit 0
+    fi
+
+    # git+http://host/path -> flake-git-http:0/host/path
+    if [[ "$url" == git+http://* ]]; then
+      path="''${url#git+http://}"
+      encoded=$(encode_special "$path")
+      echo "flake-git-http:0/$encoded"
+      exit 0
+    fi
+
+    # git+ssh://user@host/path -> flake-git-ssh:0/user--at--host/path
+    if [[ "$url" == git+ssh://* ]]; then
+      path="''${url#git+ssh://}"
+      encoded=$(encode_special "$path")
+      echo "flake-git-ssh:0/$encoded"
+      exit 0
+    fi
+
+    echo "Error: Unknown flake URL format: $url" >&2
+    echo "" >&2
+    echo "Supported formats:" >&2
+    echo "  github:user/repo" >&2
+    echo "  tarball+https://host/path" >&2
+    echo "  tarball+http://host/path" >&2
+    echo "  git+https://host/path" >&2
+    echo "  git+http://host/path" >&2
+    echo "  git+ssh://user@host/path" >&2
+    exit 1
+  '';
+
+in {
+  inherit (nix-snapshotter) pname version;
+  nix-snapshotter = nix-snapshotter;
+  encode-flake-ref = encodeFlakeRef;
+}
