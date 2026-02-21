@@ -34,6 +34,13 @@ var (
 	// Example: "flake-tarball-https:0/github.com/user/repo/archive/main.tar.gz"
 	FlakeTarballHTTPSRefPrefix = "flake-tarball-https:0/"
 
+	// FlakeTarballHTTPRefPrefix is used for tarball HTTP flake-based image references in the format
+	// "flake-tarball-http:0/host/path". This allows building images from tarball HTTP URLs directly,
+	// without requiring the nix store path to exist on the node beforehand.
+	// The format is OCI-compatible (host:port/path) and gets converted to "tarball+http://host/path".
+	// Example: "flake-tarball-http:0/example.com/archive.tar.gz"
+	FlakeTarballHTTPRefPrefix = "flake-tarball-http:0/"
+
 	// FlakeGitHTTPSRefPrefix is used for git HTTPS flake-based image references in the format
 	// "flake-git-https:0/host/path". This allows building images from git HTTPS URLs directly,
 	// without requiring the nix store path to exist on the node beforehand.
