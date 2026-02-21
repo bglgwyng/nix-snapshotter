@@ -34,6 +34,7 @@ let
       default = [
         pkgs.nix
         pkgs.git
+        pkgs.openssh
       ];
       description = ''
         Set the path of the nix-snapshotter service, if it requires access to

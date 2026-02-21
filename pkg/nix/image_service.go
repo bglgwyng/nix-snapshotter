@@ -3,6 +3,7 @@ package nix
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"sync"
@@ -158,6 +159,34 @@ func (is *imageService) PullImage(ctx context.Context, req *runtime.PullImageReq
 		urlPath = strings.TrimSuffix(urlPath, ":latest")
 		flakeRef := "git+https://" + urlPath
 		log.G(ctx).WithField("flakeRef", flakeRef).Info("[image-service] Building flake image from git HTTPS")
+
+		archivePath, err := is.flakeBuilder(ctx, flakeRef)
+		if err != nil {
+			return nil, err
+		}
+
+		return is.loadArchive(ctx, archivePath)
+	}
+
+	// Handle flake-git-ssh:0/ prefix
+	// Converts "flake-git-ssh:0/host/path" to "git+ssh://host/path" for nix build
+	// Note: "--at--" is used to encode "@" since "@" is reserved as digest separator in OCI refs
+	if strings.HasPrefix(ref, nix2container.FlakeGitSSHRefPrefix) {
+		// Extract host/path part and convert to git+ssh://host/path format
+		urlPath := strings.TrimPrefix(ref, nix2container.FlakeGitSSHRefPrefix)
+		// Remove :latest or other tags that k8s might append (not valid for flake refs)
+		urlPath = strings.TrimSuffix(urlPath, ":latest")
+		// Decode "--at--" back to "@" (first occurrence only)
+		// e.g., "git--at--github.com/user/repo" -> "git@github.com/user/repo"
+		if !strings.Contains(urlPath, "--at--") {
+			if strings.Contains(urlPath, "@") {
+				return nil, fmt.Errorf("invalid flake-git-ssh reference: '@' is not allowed, use '--at--' instead (e.g., git--at--github.com) in %q", ref)
+			}
+			return nil, fmt.Errorf("invalid flake-git-ssh reference: missing '--at--' (encodes '@' for user@host) in %q", ref)
+		}
+		urlPath = strings.Replace(urlPath, "--at--", "@", 1)
+		flakeRef := "git+ssh://" + urlPath
+		log.G(ctx).WithField("flakeRef", flakeRef).Info("[image-service] Building flake image from git SSH")
 
 		archivePath, err := is.flakeBuilder(ctx, flakeRef)
 		if err != nil {

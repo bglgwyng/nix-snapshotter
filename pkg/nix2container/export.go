@@ -40,6 +40,14 @@ var (
 	// The format is OCI-compatible (host:port/path) and gets converted to "git+https://host/path".
 	// Example: "flake-git-https:0/github.com/user/repo"
 	FlakeGitHTTPSRefPrefix = "flake-git-https:0/"
+
+	// FlakeGitSSHRefPrefix is used for git SSH flake-based image references in the format
+	// "flake-git-ssh:0/host/path". This allows building images from git SSH URLs directly,
+	// without requiring the nix store path to exist on the node beforehand.
+	// The format is OCI-compatible (host:port/path) and gets converted to "git+ssh://host/path".
+	// Note: Use "--at--" to encode "@" since "@" is reserved as digest separator in OCI refs.
+	// Example: "flake-git-ssh:0/git--at--github.com/user/repo" -> "git+ssh://git@github.com/user/repo"
+	FlakeGitSSHRefPrefix = "flake-git-ssh:0/"
 )
 
 // Export writes an OCI archive to the writer using the provided nix image
