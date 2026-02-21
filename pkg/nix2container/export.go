@@ -26,6 +26,13 @@ var (
 	// The format is OCI-compatible (host:port/path) and gets converted to "github:user/repo".
 	// Example: "flake-github:0/bglgwyng/redis-image"
 	FlakeGitHubRefPrefix = "flake-github:0/"
+
+	// FlakeTarballHTTPSRefPrefix is used for tarball HTTPS flake-based image references in the format
+	// "flake-tarball-https:0/host/path". This allows building images from tarball HTTPS URLs directly,
+	// without requiring the nix store path to exist on the node beforehand.
+	// The format is OCI-compatible (host:port/path) and gets converted to "tarball+https://host/path".
+	// Example: "flake-tarball-https:0/github.com/user/repo/archive/main.tar.gz"
+	FlakeTarballHTTPSRefPrefix = "flake-tarball-https:0/"
 )
 
 // Export writes an OCI archive to the writer using the provided nix image
