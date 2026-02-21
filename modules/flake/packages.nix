@@ -6,6 +6,7 @@
         containerd-1_7
         k3s
         nix-snapshotter
+        encode-flake-ref
       ;
 
       default = nix-snapshotter;

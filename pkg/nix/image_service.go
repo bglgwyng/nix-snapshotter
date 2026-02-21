@@ -3,6 +3,7 @@ package nix
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"sync"
@@ -35,12 +36,14 @@ type imageService struct {
 	client             *client.Client
 	imageServiceClient runtime.ImageServiceClient
 	nixBuilder         NixBuilder
+	flakeBuilder       FlakeBuilder
 }
 
 func NewImageService(ctx context.Context, containerdAddr string, opts ...ImageServiceOpt) (runtime.ImageServiceServer, error) {
 	cfg := ImageServiceConfig{
 		Config: Config{
-			nixBuilder: defaultNixBuilder,
+			nixBuilder:   defaultNixBuilder,
+			flakeBuilder: defaultFlakeBuilder,
 		},
 	}
 	for _, opt := range opts {
@@ -48,7 +51,8 @@ func NewImageService(ctx context.Context, containerdAddr string, opts ...ImageSe
 	}
 
 	service := &imageService{
-		nixBuilder: cfg.nixBuilder,
+		nixBuilder:   cfg.nixBuilder,
+		flakeBuilder: cfg.flakeBuilder,
 	}
 
 	go func() {
@@ -79,6 +83,20 @@ func (is *imageService) getClient() runtime.ImageServiceClient {
 	return client
 }
 
+// decodeFlakeRef decodes OCI-encoded special characters back to their original form.
+// OCI image references don't allow certain characters, so we encode them:
+// - "--at--" → "@" (for user@host in SSH URLs)
+// - "--q--" → "?" (for query string start)
+// - "--eq--" → "=" (for query parameter assignments)
+// - "--amp--" → "&" (for multiple query parameters)
+func decodeFlakeRef(s string) string {
+	s = strings.ReplaceAll(s, "--at--", "@")
+	s = strings.ReplaceAll(s, "--q--", "?")
+	s = strings.ReplaceAll(s, "--eq--", "=")
+	s = strings.ReplaceAll(s, "--amp--", "&")
+	return s
+}
+
 // ListImages lists existing images.
 func (is *imageService) ListImages(ctx context.Context, req *runtime.ListImagesRequest) (*runtime.ListImagesResponse, error) {
 	client := is.getClient()
@@ -107,28 +125,161 @@ func (is *imageService) PullImage(ctx context.Context, req *runtime.PullImageReq
 	}
 
 	ref := req.Image.Image
-	if !strings.HasPrefix(ref, nix2container.ImageRefPrefix) {
-		log.G(ctx).WithField("ref", ref).Info("[image-service] Falling back to CRI pull image")
-		resp, err := client.PullImage(ctx, req)
-		return resp, err
-	}
-	archivePath := strings.TrimSuffix(
-		strings.TrimPrefix(ref, nix2container.ImageRefPrefix),
-		":latest",
-	)
 
-	_, err := os.Stat(archivePath)
-	if errors.Is(err, os.ErrNotExist) {
-		log.G(ctx).Info("[image-service] Pulling nix image archive")
-		err := is.nixBuilder(ctx, "", archivePath)
+	log.G(ctx).WithField("ref", ref).WithField("flakeGitHubPrefix", nix2container.FlakeGitHubRefPrefix).Info("[image-service] PullImage called")
+
+	// Handle flake-github:0/ prefix
+	// Converts "flake-github:0/user/repo" to "github:user/repo" for nix build
+	if strings.HasPrefix(ref, nix2container.FlakeGitHubRefPrefix) {
+		// Extract user/repo part and convert to github:user/repo format
+		repoPath := strings.TrimPrefix(ref, nix2container.FlakeGitHubRefPrefix)
+		// Remove :latest or other tags that k8s might append (not valid for flake refs)
+		repoPath = strings.TrimSuffix(repoPath, ":latest")
+		repoPath = decodeFlakeRef(repoPath)
+		flakeRef := "github:" + repoPath
+		log.G(ctx).WithField("flakeRef", flakeRef).Info("[image-service] Building flake image from GitHub")
+
+		archivePath, err := is.flakeBuilder(ctx, flakeRef)
 		if err != nil {
 			return nil, err
 		}
-	} else if err != nil {
-		return nil, err
+
+		return is.loadArchive(ctx, archivePath)
 	}
 
-	log.G(ctx).Info("[image-service] Loading nix image archive")
+	// Handle flake-tarball-https:0/ prefix
+	// Converts "flake-tarball-https:0/host/path" to "tarball+https://host/path" for nix build
+	if strings.HasPrefix(ref, nix2container.FlakeTarballHTTPSRefPrefix) {
+		// Extract host/path part and convert to tarball+https://host/path format
+		urlPath := strings.TrimPrefix(ref, nix2container.FlakeTarballHTTPSRefPrefix)
+		// Remove :latest or other tags that k8s might append (not valid for flake refs)
+		urlPath = strings.TrimSuffix(urlPath, ":latest")
+		urlPath = decodeFlakeRef(urlPath)
+		flakeRef := "tarball+https://" + urlPath
+		log.G(ctx).WithField("flakeRef", flakeRef).Info("[image-service] Building flake image from tarball HTTPS")
+
+		archivePath, err := is.flakeBuilder(ctx, flakeRef)
+		if err != nil {
+			return nil, err
+		}
+
+		return is.loadArchive(ctx, archivePath)
+	}
+
+	// Handle flake-tarball-http:0/ prefix
+	// Converts "flake-tarball-http:0/host/path" to "tarball+http://host/path" for nix build
+	if strings.HasPrefix(ref, nix2container.FlakeTarballHTTPRefPrefix) {
+		// Extract host/path part and convert to tarball+http://host/path format
+		urlPath := strings.TrimPrefix(ref, nix2container.FlakeTarballHTTPRefPrefix)
+		// Remove :latest or other tags that k8s might append (not valid for flake refs)
+		urlPath = strings.TrimSuffix(urlPath, ":latest")
+		urlPath = decodeFlakeRef(urlPath)
+		flakeRef := "tarball+http://" + urlPath
+		log.G(ctx).WithField("flakeRef", flakeRef).Info("[image-service] Building flake image from tarball HTTP")
+
+		archivePath, err := is.flakeBuilder(ctx, flakeRef)
+		if err != nil {
+			return nil, err
+		}
+
+		return is.loadArchive(ctx, archivePath)
+	}
+
+	// Handle flake-git-https:0/ prefix
+	// Converts "flake-git-https:0/host/path" to "git+https://host/path" for nix build
+	if strings.HasPrefix(ref, nix2container.FlakeGitHTTPSRefPrefix) {
+		// Extract host/path part and convert to git+https://host/path format
+		urlPath := strings.TrimPrefix(ref, nix2container.FlakeGitHTTPSRefPrefix)
+		// Remove :latest or other tags that k8s might append (not valid for flake refs)
+		urlPath = strings.TrimSuffix(urlPath, ":latest")
+		urlPath = decodeFlakeRef(urlPath)
+		flakeRef := "git+https://" + urlPath
+		log.G(ctx).WithField("flakeRef", flakeRef).Info("[image-service] Building flake image from git HTTPS")
+
+		archivePath, err := is.flakeBuilder(ctx, flakeRef)
+		if err != nil {
+			return nil, err
+		}
+
+		return is.loadArchive(ctx, archivePath)
+	}
+
+	// Handle flake-git-http:0/ prefix
+	// Converts "flake-git-http:0/host/path" to "git+http://host/path" for nix build
+	if strings.HasPrefix(ref, nix2container.FlakeGitHTTPRefPrefix) {
+		// Extract host/path part and convert to git+http://host/path format
+		urlPath := strings.TrimPrefix(ref, nix2container.FlakeGitHTTPRefPrefix)
+		// Remove :latest or other tags that k8s might append (not valid for flake refs)
+		urlPath = strings.TrimSuffix(urlPath, ":latest")
+		urlPath = decodeFlakeRef(urlPath)
+		flakeRef := "git+http://" + urlPath
+		log.G(ctx).WithField("flakeRef", flakeRef).Info("[image-service] Building flake image from git HTTP")
+
+		archivePath, err := is.flakeBuilder(ctx, flakeRef)
+		if err != nil {
+			return nil, err
+		}
+
+		return is.loadArchive(ctx, archivePath)
+	}
+
+	// Handle flake-git-ssh:0/ prefix
+	// Converts "flake-git-ssh:0/host/path" to "git+ssh://host/path" for nix build
+	// Note: "--at--" is used to encode "@" since "@" is reserved as digest separator in OCI refs
+	if strings.HasPrefix(ref, nix2container.FlakeGitSSHRefPrefix) {
+		// Extract host/path part and convert to git+ssh://host/path format
+		urlPath := strings.TrimPrefix(ref, nix2container.FlakeGitSSHRefPrefix)
+		// Remove :latest or other tags that k8s might append (not valid for flake refs)
+		urlPath = strings.TrimSuffix(urlPath, ":latest")
+		// Validate that "--at--" is present (required for SSH user@host format)
+		if !strings.Contains(urlPath, "--at--") {
+			if strings.Contains(urlPath, "@") {
+				return nil, fmt.Errorf("invalid flake-git-ssh reference: '@' is not allowed, use '--at--' instead (e.g., git--at--github.com) in %q", ref)
+			}
+			return nil, fmt.Errorf("invalid flake-git-ssh reference: missing '--at--' (encodes '@' for user@host) in %q", ref)
+		}
+		urlPath = decodeFlakeRef(urlPath)
+		flakeRef := "git+ssh://" + urlPath
+		log.G(ctx).WithField("flakeRef", flakeRef).Info("[image-service] Building flake image from git SSH")
+
+		archivePath, err := is.flakeBuilder(ctx, flakeRef)
+		if err != nil {
+			return nil, err
+		}
+
+		return is.loadArchive(ctx, archivePath)
+	}
+
+	// Handle nix:0 prefix
+	if strings.HasPrefix(ref, nix2container.ImageRefPrefix) {
+		archivePath := strings.TrimSuffix(
+			strings.TrimPrefix(ref, nix2container.ImageRefPrefix),
+			":latest",
+		)
+
+		_, err := os.Stat(archivePath)
+		if errors.Is(err, os.ErrNotExist) {
+			log.G(ctx).Info("[image-service] Pulling nix image archive")
+			err := is.nixBuilder(ctx, "", archivePath)
+			if err != nil {
+				return nil, err
+			}
+		} else if err != nil {
+			return nil, err
+		}
+
+		return is.loadArchive(ctx, archivePath)
+	}
+
+	// Fallback to CRI pull image
+	log.G(ctx).WithField("ref", ref).Info("[image-service] Falling back to CRI pull image")
+	resp, err := client.PullImage(ctx, req)
+	return resp, err
+}
+
+// loadArchive loads an OCI archive into containerd and returns the image reference.
+func (is *imageService) loadArchive(ctx context.Context, archivePath string) (*runtime.PullImageResponse, error) {
+	log.G(ctx).WithField("archivePath", archivePath).Info("[image-service] Loading nix image archive")
 	ctx = namespaces.WithNamespace(ctx, "k8s.io")
 	img, err := nix2container.Load(ctx, is.client, archivePath)
 	if err != nil {

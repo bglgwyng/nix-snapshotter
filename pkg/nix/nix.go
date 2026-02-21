@@ -18,7 +18,8 @@ func Supported(root string) error {
 
 // Config is used to configure common options.
 type Config struct {
-	nixBuilder NixBuilder
+	nixBuilder   NixBuilder
+	flakeBuilder FlakeBuilder
 }
 
 func (c *Config) apply(fn func(c *Config)) {
@@ -48,6 +49,13 @@ func WithNixBuilder(nixBuilder NixBuilder) Opt {
 	})
 }
 
+// WithFlakeBuilder is an option to override the default FlakeBuilder.
+func WithFlakeBuilder(flakeBuilder FlakeBuilder) Opt {
+	return optFn(func(c *Config) {
+		c.flakeBuilder = flakeBuilder
+	})
+}
+
 // NixBuilder is a function that is able to substitute a nix store path and
 // optionally create an out-link. outLink may be empty in which case out-links
 // are not needed.
@@ -71,6 +79,25 @@ func defaultNixBuilder(ctx context.Context, outLink, nixStorePath string) error 
 			Errorf("Failed to create gc root: %s\n%s", err, string(out))
 	}
 	return err
+}
+
+// FlakeBuilder is a function that builds a flake URL and returns the resulting
+// nix store path. This is used to build images from flake references like
+// "github:user/repo#package".
+type FlakeBuilder func(ctx context.Context, flakeRef string) (string, error)
+
+func defaultFlakeBuilder(ctx context.Context, flakeRef string) (string, error) {
+	args := []string{"build", flakeRef, "--print-out-paths", "--no-link"}
+
+	log.G(ctx).Infof("[nix-snapshotter] Calling nix %s", strings.Join(args, " "))
+	out, err := exec.Command("nix", args...).CombinedOutput()
+	if err != nil {
+		log.G(ctx).
+			WithField("flakeRef", flakeRef).
+			Errorf("Failed to build flake: %s\n%s", err, string(out))
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
 }
 
 // NewExternalBuilder returns a NixBuilder from an external executable with
