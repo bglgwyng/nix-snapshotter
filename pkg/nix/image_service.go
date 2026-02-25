@@ -31,6 +31,7 @@ type ImageServiceOpt interface {
 }
 
 type imageService struct {
+	runtime.UnimplementedImageServiceServer
 	mu                 sync.Mutex
 	client             *client.Client
 	imageServiceClient runtime.ImageServiceClient
